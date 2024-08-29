@@ -19,6 +19,12 @@ const InvoiceForm = () => {
       });
 
       if (response.ok) {
+        const blob = await response.blob();
+
+        const url = window.URL.createObjectURL(blob);
+
+        window.open(url, "_blank");
+
         setMessage("Invoice generated successfully!");
       } else {
         setMessage("Failed to generate invoice. Please try again.");
@@ -30,10 +36,10 @@ const InvoiceForm = () => {
 
   return (
     <div className="invoice-form-container">
-      <h1 className="form-title">Fire Truck Invoice Generator</h1>
+      <h1 className="form-title">Garage Invoice Generator</h1>
       <form onSubmit={handleSubmit} className="invoice-form">
         <div className="form-group">
-          <label htmlFor="link">Paste Garage fire truck listing URL:</label>
+          <label htmlFor="link">Paste Garage listing URL:</label>
           <input
             type="text"
             id="link"

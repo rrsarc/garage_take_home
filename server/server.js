@@ -1,33 +1,111 @@
 const express = require("express");
-const bodyParser = require("body-parser");
+const fetch = require("node-fetch");
+const PDFDocument = require("pdfkit");
+const stylePDF = require("./pdfStyler");
+const path = require("path");
 
 const app = express();
-const port = process.env.PORT || 3001;
+const port = 3001;
 
-app.use(bodyParser.json());
+app.use(express.json());
 
-app.get("/health", (req, res) => {
-  res.status(200).json({ status: "OK" });
+app.use((req, res, next) => {
+  const logEntry = `
+  [${new Date().toISOString()}] ${req.method} ${req.url}
+  Headers: ${JSON.stringify(req.headers)}
+  Body: ${JSON.stringify(req.body)}
+  `;
+  console.log(logEntry);
+  next();
 });
 
-app.post("/generate-invoice", (req, res) => {
-  const { link } = req.body;
+app.use(express.static(path.join(__dirname, "../client/build")));
 
-  const uuidMatch = link.match(
-    /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
-  );
-
-  if (!uuidMatch) {
-    return res.status(400).json({ error: "Invalid link format" });
+function extractUuidFromUrl(inputUrl) {
+  const uuidRegex =
+    /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/;
+  const match = inputUrl.match(uuidRegex);
+  if (match) {
+    return match[0];
   }
+  throw new Error("Invalid URL: UUID not found");
+}
 
-  const uuid = uuidMatch[0];
+app.post("/generate-invoice", async (req, res) => {
+  try {
+    const inputUrl = req.body.link;
+    if (!inputUrl) {
+      return res
+        .status(400)
+        .json({ error: "URL is required in the request body" });
+    }
 
-  // Generate the PDF ... ()
+    let listingId;
+    try {
+      listingId = extractUuidFromUrl(inputUrl);
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
 
-  res.status(200).json({ message: "Invoice generation requested", uuid });
+    if (!listingId) {
+      return res.status(400).json({ error: "Listing URI required" });
+    }
+
+    const apiResponse = await fetch(
+      "https://garage-backend.onrender.com/getListing",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: listingId }),
+      }
+    );
+
+    if (!apiResponse.ok) {
+      throw new Error(`API request failed with status ${apiResponse.status}`);
+    }
+
+    const responseData = await apiResponse.json();
+
+    if (responseData.error) {
+      throw new Error(`API returned an error: ${responseData.error}`);
+    }
+
+    const listingData = responseData.result.listing;
+
+    const invoiceData = {
+      invoiceNumber: `INV-${listingId.slice(0, 8)}`,
+      date: new Date().toLocaleDateString(),
+      listingTitle: listingData.listingTitle,
+      sellingPrice: listingData.sellingPrice,
+      totalDue: listingData.sellingPrice,
+      listingDescription: listingData.listingDescription,
+      imageUrls: listingData.imageUrls,
+    };
+
+    const doc = new PDFDocument();
+    const buffers = [];
+    doc.on("data", buffers.push.bind(buffers));
+    doc.on("end", () => {
+      const pdfData = Buffer.concat(buffers);
+      res.setHeader("Content-Length", pdfData.length);
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", "attachment; filename=invoice.pdf");
+      res.send(pdfData);
+    });
+
+    await stylePDF(doc, invoiceData);
+
+    doc.end();
+  } catch (error) {
+    console.error("Error generating invoice:", error);
+    res.status(500).json({ error: "Failed to generate invoice" });
+  }
+});
+
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "../client/build", "index.html"));
 });
 
 app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+  console.log(`Server running at http://localhost:${port}`);
 });
